@@ -1,15 +1,20 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Personal AI Trainer API for Git & GitHub learning platform
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: lessons
+    description: Lesson and curriculum operations
+  - name: progress
+    description: User progress tracking
+  - name: ai
+    description: AI trainer interactions
 paths:
   /healthz:
     get:
@@ -24,6 +29,156 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /lessons:
+    get:
+      operationId: getLessons
+      tags: [lessons]
+      summary: Get all lessons
+      description: Returns all lessons organized by level
+      responses:
+        "200":
+          description: List of lessons
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lesson"
+
+  /lessons/{id}:
+    get:
+      operationId: getLesson
+      tags: [lessons]
+      summary: Get a specific lesson
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lesson details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LessonDetail"
+
+  /progress:
+    get:
+      operationId: getProgress
+      tags: [progress]
+      summary: Get user progress
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProgress"
+
+  /progress/complete:
+    post:
+      operationId: completeLesson
+      tags: [progress]
+      summary: Mark a lesson as complete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteLessonRequest"
+      responses:
+        "200":
+          description: Updated progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProgress"
+
+  /ai/explain:
+    post:
+      operationId: aiExplain
+      tags: [ai]
+      summary: Get AI explanation for a git concept
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiExplainRequest"
+      responses:
+        "200":
+          description: AI explanation with confidence score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiExplainResponse"
+
+  /ai/correct:
+    post:
+      operationId: aiCorrect
+      tags: [ai]
+      summary: Submit a user correction to the AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiCorrectRequest"
+      responses:
+        "200":
+          description: AI acknowledgment of correction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiCorrectResponse"
+
+  /ai/study-plan:
+    post:
+      operationId: generateStudyPlan
+      tags: [ai]
+      summary: Generate a personalized study plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudyPlanRequest"
+      responses:
+        "200":
+          description: Personalized study plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudyPlanResponse"
+
+  /ai/validate-command:
+    post:
+      operationId: validateCommand
+      tags: [ai]
+      summary: Validate a git command entered by the user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateCommandRequest"
+      responses:
+        "200":
+          description: Command validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateCommandResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +189,319 @@ components:
       required:
         - status
 
+    Lesson:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        level:
+          type: string
+          enum: [beginner, intermediate, advanced]
+        order:
+          type: integer
+        xpReward:
+          type: integer
+        estimatedMinutes:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+        isLocked:
+          type: boolean
+      required:
+        - id
+        - title
+        - description
+        - level
+        - order
+        - xpReward
+        - estimatedMinutes
+        - tags
+        - isLocked
+
+    LessonStep:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [concept, command, challenge, quiz]
+        title:
+          type: string
+        content:
+          type: string
+        command:
+          type: string
+        expectedOutput:
+          type: string
+        hint:
+          type: string
+      required:
+        - id
+        - type
+        - title
+        - content
+
+    LessonDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        level:
+          type: string
+          enum: [beginner, intermediate, advanced]
+        order:
+          type: integer
+        xpReward:
+          type: integer
+        estimatedMinutes:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/LessonStep"
+      required:
+        - id
+        - title
+        - description
+        - level
+        - order
+        - xpReward
+        - estimatedMinutes
+        - tags
+        - steps
+
+    UserProgress:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        completedLessons:
+          type: array
+          items:
+            type: string
+        totalXp:
+          type: integer
+        currentLevel:
+          type: string
+        streak:
+          type: integer
+        sessionCount:
+          type: integer
+        goals:
+          type: array
+          items:
+            type: string
+        aiCorrections:
+          type: integer
+      required:
+        - sessionId
+        - completedLessons
+        - totalXp
+        - currentLevel
+        - streak
+        - sessionCount
+        - goals
+        - aiCorrections
+
+    CompleteLessonRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        lessonId:
+          type: string
+        timeSpentMinutes:
+          type: integer
+      required:
+        - sessionId
+        - lessonId
+        - timeSpentMinutes
+
+    AiExplainRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        concept:
+          type: string
+        lessonId:
+          type: string
+        context:
+          type: string
+      required:
+        - sessionId
+        - concept
+
+    AiExplainResponse:
+      type: object
+      properties:
+        explanation:
+          type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        confidenceScore:
+          type: number
+        confidenceReason:
+          type: string
+        examples:
+          type: array
+          items:
+            type: string
+        relatedConcepts:
+          type: array
+          items:
+            type: string
+        sessionAware:
+          type: boolean
+      required:
+        - explanation
+        - confidence
+        - confidenceScore
+        - confidenceReason
+        - examples
+        - relatedConcepts
+        - sessionAware
+
+    AiCorrectRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        originalExplanation:
+          type: string
+        concept:
+          type: string
+        userCorrection:
+          type: string
+      required:
+        - sessionId
+        - originalExplanation
+        - concept
+        - userCorrection
+
+    AiCorrectResponse:
+      type: object
+      properties:
+        acknowledgment:
+          type: string
+        updatedExplanation:
+          type: string
+        learned:
+          type: boolean
+        thankYouMessage:
+          type: string
+      required:
+        - acknowledgment
+        - updatedExplanation
+        - learned
+        - thankYouMessage
+
+    StudyPlanRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        goals:
+          type: array
+          items:
+            type: string
+        currentLevel:
+          type: string
+        availableHoursPerWeek:
+          type: integer
+        sessionCount:
+          type: integer
+      required:
+        - sessionId
+        - goals
+        - currentLevel
+        - availableHoursPerWeek
+        - sessionCount
+
+    StudyPlanResponse:
+      type: object
+      properties:
+        plan:
+          type: string
+        weeklyGoals:
+          type: array
+          items:
+            type: string
+        recommendedLessons:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        confidenceScore:
+          type: number
+        confidenceReason:
+          type: string
+        estimatedCompletionWeeks:
+          type: integer
+      required:
+        - plan
+        - weeklyGoals
+        - recommendedLessons
+        - confidence
+        - confidenceScore
+        - confidenceReason
+        - estimatedCompletionWeeks
+
+    ValidateCommandRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        command:
+          type: string
+        expectedCommand:
+          type: string
+        lessonContext:
+          type: string
+      required:
+        - sessionId
+        - command
+
+    ValidateCommandResponse:
+      type: object
+      properties:
+        isCorrect:
+          type: boolean
+        feedback:
+          type: string
+        simulatedOutput:
+          type: string
+        gitTreeUpdate:
+          type: object
+          additionalProperties: true
+        hint:
+          type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        confidenceScore:
+          type: number
+      required:
+        - isCorrect
+        - feedback
+        - simulatedOutput
+        - confidence
+        - confidenceScore

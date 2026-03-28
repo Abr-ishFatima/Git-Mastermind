@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "The Personal AI Trainer"
+version = "1.0.0"
+id = "artifacts/git-trainer"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24805
+
+[services.development]
+run = "pnpm --filter @workspace/git-trainer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/git-trainer", "run", "build" ]
+publicDir = "artifacts/git-trainer/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24805"
+BASE_PATH = "/"

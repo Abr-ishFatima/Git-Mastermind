@@ -1,0 +1,14 @@
+packages:
+  "framer-motion": "For smooth transitions in the git tree and UI interactions"
+  "uuid": "For generating and managing anonymous user session IDs"
+  "@types/uuid": "Types for uuid"
+  "date-fns": "For formatting timestamps"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility function to efficiently merge Tailwind CSS classes"
+
+images: []
+
+notes:
+  - "Using @workspace/api-client-react for all API interactions based on the provided monorepo structure"
+  - "Session ID is stored in localStorage to persist progress across reloads"
+  - "Git Tree visualizer expects generic structural data or uses a localized simulation for visual flair"
