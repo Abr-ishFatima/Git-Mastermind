@@ -31,7 +31,7 @@ const GIT_KNOWLEDGE: Record<string, ExplanationEntry> = {
   "git add": {
     explanation: "`git add` moves changes from your **working directory** to the **staging area** (also called the index). Think of it as packing items into a box before shipping — you choose exactly which changes to include in your next commit. Unstaged changes won't be committed even if the file was modified.",
     confidence: 0.98,
-    examples: ["git add file.txt  (stage one file)", "git add .  (stage all changes in current directory)", "git add -p  (interactive: choose individual hunks to stage)", "git add src/  (stage an entire directory)"],
+    examples: ["git add file.txt  (stage one file)", "git add .  (stage all changes in current directory)", "git add -p  (interactive: choose individual hunks to stage)", "git add src/  (stage an entire directory)", "git add -A  (stage all changes including deletions)"],
     related: ["git commit", "git status", "git restore --staged", "staging area"],
     tip: "`git add -p` is the power-user way: review every change chunk before staging it."
   },
@@ -198,100 +198,63 @@ const GIT_KNOWLEDGE: Record<string, ExplanationEntry> = {
 
 function matchConcept(raw: string): ExplanationEntry | null {
   const q = raw.toLowerCase().trim();
-  
-  // Direct match
   if (GIT_KNOWLEDGE[q]) return GIT_KNOWLEDGE[q];
-  
-  // Prefix and keyword match with scoring
+
   let best: { key: string; score: number } | null = null;
   for (const key of Object.keys(GIT_KNOWLEDGE)) {
     let score = 0;
     const keyWords = key.split(' ');
     const qWords = q.split(' ');
-    
-    // Exact key found in query
     if (q.includes(key)) score += 10;
-    // Query found in key
     else if (key.includes(q)) score += 8;
-    // Word overlap
     else {
-      for (const kw of keyWords) {
-        if (q.includes(kw)) score += 2;
-      }
-      for (const qw of qWords) {
-        if (key.includes(qw)) score += 1;
-      }
+      for (const kw of keyWords) { if (q.includes(kw)) score += 2; }
+      for (const qw of qWords) { if (key.includes(qw)) score += 1; }
     }
-    
-    // Boost exact command matches
     if (q.startsWith(key.split(' ')[0]) && key.startsWith('git')) score += 3;
-    
-    if (score > 0 && (!best || score > best.score)) {
-      best = { key, score };
-    }
+    if (score > 0 && (!best || score > best.score)) best = { key, score };
   }
-  
   return best && best.score >= 2 ? GIT_KNOWLEDGE[best.key] : null;
 }
 
 function buildFallback(concept: string, sessionCount: number): ExplanationEntry {
   const isGitCommand = concept.toLowerCase().startsWith('git ');
-  const baseConfidence = isGitCommand ? 0.72 : 0.60;
   return {
-    explanation: `**${concept}** is an important topic in Git. In version control, understanding how different operations interact helps you collaborate effectively and manage your codebase with confidence.\n\nFor the most accurate and up-to-date information, check the official Git documentation: \`git help ${concept.split(' ')[1] || concept}\` or visit https://git-scm.com/docs`,
-    confidence: Math.max(0.45, baseConfidence - (sessionCount < 2 ? 0.1 : 0)),
-    examples: [`git help ${concept.split(' ')[1] || 'git'}`, "https://git-scm.com/docs"],
+    explanation: `**${concept}** is an important topic in Git. For the most accurate details, check the official docs: \`git help ${concept.split(' ')[1] || concept}\` or visit https://git-scm.com/docs`,
+    confidence: Math.max(0.45, isGitCommand ? 0.72 : 0.60),
+    examples: [`git help ${concept.split(' ')[1] || 'git'}`],
     related: ["git status", "git log", "git help"],
     tip: "When in doubt, `git help <command>` is always the most accurate source."
   };
 }
 
-function scoreConfidence(base: number, sessionCount: number, aiCorrections: number): {
-  adjusted: number; level: "high" | "medium" | "low"; reason: string
-} {
+function scoreConfidence(base: number, sessionCount: number, aiCorrections: number) {
   let adjusted = base;
   if (sessionCount < 2) adjusted -= 0.07;
   else if (sessionCount >= 5) adjusted = Math.min(0.99, adjusted + 0.02);
   if (aiCorrections > 0) adjusted = Math.min(0.99, adjusted + aiCorrections * 0.015);
-
   const level: "high" | "medium" | "low" = adjusted >= 0.88 ? "high" : adjusted >= 0.72 ? "medium" : "low";
   const levelLabel = `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
-  
-  let reason = `Confidence: ${levelLabel}`;
-  if (sessionCount <= 1) reason += ` — based on ${sessionCount} session`;
-  else reason += ` — based on ${sessionCount} sessions`;
+  let reason = `Confidence: ${levelLabel} — based on ${sessionCount} session${sessionCount !== 1 ? 's' : ''}`;
   if (aiCorrections > 0) reason += ` · ${aiCorrections} correction${aiCorrections > 1 ? 's' : ''} improved accuracy`;
-  if (adjusted < 0.72) reason += " · This topic has lower coverage — feel free to correct me";
-
   return { adjusted, level, reason };
 }
 
 router.post("/ai/explain", async (req, res) => {
   try {
     const { sessionId, concept, lessonId, context } = req.body;
-    
-    let sessionCount = 1;
-    let aiCorrections = 0;
-    
+    let sessionCount = 1, aiCorrections = 0;
     if (sessionId) {
       try {
         const [progress] = await db.select().from(userProgressTable).where(eq(userProgressTable.sessionId, sessionId));
         if (progress) { sessionCount = progress.sessionCount; aiCorrections = progress.aiCorrections; }
       } catch {}
     }
-
-    // Build query: prefer explicit question, fall back to lesson context
     const query = [concept, lessonId, context].filter(Boolean).join(' ');
     const match = matchConcept(query) || matchConcept(concept);
     const entry = match || buildFallback(concept, sessionCount);
-
     const { adjusted, level, reason } = scoreConfidence(entry.confidence, sessionCount, aiCorrections);
-
-    // Add tip to explanation if present
-    const fullExplanation = entry.tip
-      ? `${entry.explanation}\n\n💡 **Pro tip:** ${entry.tip}`
-      : entry.explanation;
-
+    const fullExplanation = entry.tip ? `${entry.explanation}\n\n💡 **Pro tip:** ${entry.tip}` : entry.explanation;
     res.json({
       explanation: fullExplanation,
       confidence: level,
@@ -301,7 +264,7 @@ router.post("/ai/explain", async (req, res) => {
       relatedConcepts: entry.related,
       sessionAware: sessionCount > 1,
     });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to generate explanation" });
   }
 });
@@ -309,7 +272,6 @@ router.post("/ai/explain", async (req, res) => {
 router.post("/ai/correct", async (req, res) => {
   try {
     const { sessionId, concept, originalExplanation, userCorrection } = req.body;
-    
     if (sessionId) {
       try {
         const [progress] = await db.select().from(userProgressTable).where(eq(userProgressTable.sessionId, sessionId));
@@ -322,17 +284,13 @@ router.post("/ai/correct", async (req, res) => {
         }
       } catch {}
     }
-
-    const acknowledgment = "✅ Correction noted! You're absolutely right to flag that.";
-    const updatedExplanation = `I've updated my understanding based on your correction:\n\n**Your correction:** "${userCorrection}"\n\nThis is an important nuance about **${concept || 'this topic'}** that many learners find clarifying. I'll use this improved understanding in future explanations during this session.`;
-    
     res.json({
-      acknowledgment,
-      updatedExplanation,
+      acknowledgment: "✅ Correction noted! You're absolutely right to flag that.",
+      updatedExplanation: `I've updated my understanding based on your correction:\n\n**Your correction:** "${userCorrection}"\n\nThis is an important nuance about **${concept || 'this topic'}** that many learners find clarifying. I'll use this improved understanding in future explanations.`,
       learned: true,
-      thankYouMessage: "Your correction has been recorded. The AI adapts to your knowledge — this is the 'Human In The Loop' in action! Each correction makes my responses more accurate for you.",
+      thankYouMessage: "Your correction has been recorded. This is the 'Human In The Loop' in action — each correction makes my responses more accurate for you.",
     });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to process correction" });
   }
 });
@@ -340,179 +298,329 @@ router.post("/ai/correct", async (req, res) => {
 router.post("/ai/study-plan", async (req, res) => {
   try {
     const { sessionId, goals, currentLevel, availableHoursPerWeek, sessionCount } = req.body;
-
     const LEVEL_PLANS: Record<string, { plan: string; weeklyGoals: string[]; recommendedLessons: string[]; weeks: number }> = {
       beginner: {
-        plan: "Start with the fundamentals. Learn what Git is, initialize repositories, stage and commit changes, and connect to GitHub. By the end you'll have your first project live on GitHub.",
+        plan: "Start with the fundamentals. Learn what Git is, initialize repositories, stage and commit changes, and connect to GitHub.",
         weeklyGoals: ["Understand version control concepts", "Make 5 real commits using init → add → commit", "Push your first repo to GitHub"],
         recommendedLessons: ["git-intro", "git-init", "git-add", "git-commit", "git-status-log", "github-connect"],
         weeks: 3,
       },
       intermediate: {
-        plan: "Master the branching workflow that professional teams use. You'll learn to develop features in isolation, collaborate with pull requests, and handle merge conflicts like a pro.",
+        plan: "Master the branching workflow professional teams use every day.",
         weeklyGoals: ["Master git branch and merge workflow", "Resolve your first real merge conflict", "Collaborate on a GitHub repository with branches"],
         recommendedLessons: ["git-branch", "git-checkout-switch", "git-merge", "git-pull-push", "merge-conflicts", "git-stash"],
         weeks: 4,
       },
       advanced: {
-        plan: "Level up to senior-engineer Git skills. Master rebase for clean history, cherry-pick for selective commits, bisect for debugging, hooks for automation, and GitHub Actions for CI/CD.",
+        plan: "Level up to senior-engineer Git skills: rebase, cherry-pick, bisect, hooks, and GitHub Actions CI/CD.",
         weeklyGoals: ["Rebase a feature branch cleanly onto main", "Create a pre-commit hook for linting", "Deploy with a GitHub Actions CI/CD pipeline"],
         recommendedLessons: ["git-rebase", "git-cherry-pick", "interactive-rebase", "git-bisect", "git-hooks", "github-actions"],
         weeks: 5,
       },
     };
-
     const levelKey = (currentLevel || "beginner").toLowerCase();
     const planData = LEVEL_PLANS[levelKey] || LEVEL_PLANS.beginner;
     const sessions = sessionCount || 1;
     const hrs = availableHoursPerWeek || 3;
-
     const confidenceScore = sessions <= 1 ? 0.65 : sessions <= 3 ? 0.78 : 0.90;
     const confidenceLevel: "high" | "medium" | "low" = confidenceScore >= 0.85 ? "high" : confidenceScore >= 0.72 ? "medium" : "low";
-
-    const goalNote = goals?.length
-      ? ` Your goals (${goals.join(", ")}) align well with this plan.`
-      : "";
-
-    const estimatedWeeks = Math.max(1, Math.ceil(planData.weeks / Math.max(1, hrs / 3)));
-
     res.json({
-      plan: planData.plan + goalNote,
+      plan: planData.plan + (goals?.length ? ` Your goals (${goals.join(", ")}) align well.` : ""),
       weeklyGoals: planData.weeklyGoals,
       recommendedLessons: planData.recommendedLessons,
       confidence: confidenceLevel,
       confidenceScore,
-      confidenceReason: `Confidence: ${confidenceLevel.charAt(0).toUpperCase()}${confidenceLevel.slice(1)} — based on ${sessions} session${sessions !== 1 ? 's' : ''}. ${sessions < 3 ? 'More sessions allow better personalization.' : 'Good history for accurate planning.'}`,
-      estimatedCompletionWeeks: estimatedWeeks,
+      confidenceReason: `Confidence: ${confidenceLevel.charAt(0).toUpperCase()}${confidenceLevel.slice(1)} — based on ${sessions} session${sessions !== 1 ? 's' : ''}.`,
+      estimatedCompletionWeeks: Math.max(1, Math.ceil(planData.weeks / Math.max(1, hrs / 3))),
     });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to generate study plan" });
   }
 });
 
+// ─── Terminal command simulator ─────────────────────────────────────────────
+
+function simulateGitCommand(cmd: string): { output: string; success: boolean; hint?: string } {
+  const parts = cmd.trim().split(/\s+/);
+  const sub = parts[1] || "";
+  const args = parts.slice(2);
+  const argStr = args.join(" ");
+  const hash = () => Math.random().toString(36).slice(2, 9);
+
+  switch (sub) {
+    case "init":
+      return { output: "Initialized empty Git repository in /home/user/practice-repo/.git/", success: true };
+
+    case "add": {
+      if (!args.length) return { output: "", success: false, hint: "Usage: git add <file> or git add ." };
+      const target = argStr === "-p" || argStr === "--patch"
+        ? "interactive mode — diff hunks will appear here"
+        : `${argStr}`;
+      const isAll = argStr === "." || argStr === "-A" || argStr === "--all";
+      const output = isAll
+        ? ""
+        : ``;
+      // git add produces no output on success for files/dirs
+      return { output: "", success: true };
+    }
+
+    case "commit": {
+      const msgMatch = cmd.match(/-m\s+['"](.+?)['"]/);
+      const msg = msgMatch ? msgMatch[1] : args.join(" ") || "update";
+      if (!msgMatch && !args.some(a => a === "--amend" || a === "--allow-empty")) {
+        return { output: "", success: false, hint: "Usage: git commit -m 'your message'" };
+      }
+      if (argStr === "--amend") {
+        return { output: `[main ${hash()}] (amended commit)`, success: true };
+      }
+      return {
+        output: `[main ${hash()}] ${msg}\n 1 file changed, 1 insertion(+)`,
+        success: true
+      };
+    }
+
+    case "status": {
+      const short = args.includes("-s") || args.includes("--short");
+      if (short) return { output: "M  README.md\n?? new-file.txt", success: true };
+      return {
+        output: `On branch main\nChanges to be committed:\n  (use "git restore --staged <file>..." to unstage)\n\n\tnew file:   README.md\n\nUntracked files:\n  (use "git add <file>..." to include in what will be committed)\n\n\tnew-file.txt`,
+        success: true
+      };
+    }
+
+    case "log": {
+      if (args.includes("--oneline")) {
+        return {
+          output: `${hash()} (HEAD -> main) Add user authentication\n${hash()} Fix navigation bug\n${hash()} Initial commit`,
+          success: true
+        };
+      }
+      if (args.includes("--graph")) {
+        return {
+          output: `* ${hash()} (HEAD -> main) Merge feature/login\n|\\ \n| * ${hash()} (feature/login) Add login page\n|/\n* ${hash()} Initial commit`,
+          success: true
+        };
+      }
+      return {
+        output: `commit ${hash()}def5678abc1234 (HEAD -> main)\nAuthor: You <you@example.com>\nDate:   ${new Date().toDateString()}\n\n    Add user authentication\n\ncommit ${hash()}abc1234def5678\nAuthor: You <you@example.com>\nDate:   ${new Date(Date.now() - 86400000).toDateString()}\n\n    Initial commit`,
+        success: true
+      };
+    }
+
+    case "branch": {
+      if (args.includes("-a")) return { output: "* main\n  feature/login\n  remotes/origin/main\n  remotes/origin/feature/login", success: true };
+      if (args.includes("-d") || args.includes("-D")) return { output: `Deleted branch ${args[1] || "feature/done"} (was ${hash()}).`, success: true };
+      if (args.includes("-m")) return { output: "", success: true };
+      if (args.length && !args[0].startsWith("-")) return { output: "", success: true }; // create branch
+      return { output: "* main\n  feature/login\n  feature/profile", success: true };
+    }
+
+    case "switch": {
+      if (args.includes("-c") || args.includes("--create")) {
+        const branch = args[args.indexOf("-c") + 1] || args[args.indexOf("--create") + 1] || "new-branch";
+        return { output: `Switched to a new branch '${branch}'`, success: true };
+      }
+      const branch = args[0] || "main";
+      if (branch === "-") return { output: "Switched to branch 'feature/login'", success: true };
+      return { output: `Switched to branch '${branch}'`, success: true };
+    }
+
+    case "checkout": {
+      if (args.includes("-b")) {
+        const branch = args[args.indexOf("-b") + 1] || "new-branch";
+        return { output: `Switched to a new branch '${branch}'`, success: true };
+      }
+      if (args.includes("--")) return { output: "", success: true };
+      return { output: `Switched to branch '${args[0] || "main"}'`, success: true };
+    }
+
+    case "merge": {
+      if (args.includes("--abort")) return { output: "Merge aborted.", success: true };
+      const branch = args.find(a => !a.startsWith("-")) || "feature";
+      return {
+        output: `Updating ${hash()}..${hash()}\nFast-forward\n src/feature.js | 42 ++++++++++++\n 1 file changed, 42 insertions(+)`,
+        success: true
+      };
+    }
+
+    case "stash": {
+      const stashSub = args[0];
+      if (stashSub === "pop") return { output: `On branch main\nChanges not staged for commit:\n  modified: src/app.js\nDropped refs/stash@{0} (${hash()})`, success: true };
+      if (stashSub === "apply") return { output: "On branch main\nChanges not staged for commit:\n  modified: src/app.js", success: true };
+      if (stashSub === "list") return { output: `stash@{0}: WIP on main: ${hash()} Add navigation\nstash@{1}: WIP on feature: ${hash()} Partial login`, success: true };
+      if (stashSub === "drop") return { output: `Dropped refs/stash@{0} (${hash()})`, success: true };
+      if (!stashSub || stashSub === "save" || stashSub === "push") return { output: `Saved working directory and index state WIP on main: ${hash()} Latest commit`, success: true };
+      return { output: "", success: false, hint: `Unknown stash sub-command: ${stashSub}` };
+    }
+
+    case "push": {
+      if (args.includes("--delete")) return { output: `To https://github.com/user/repo.git\n - [deleted]         ${args[args.indexOf("--delete") + 1] || "branch"}`, success: true };
+      const branch = args.find(a => !a.startsWith("-") && a !== "origin") || "main";
+      return {
+        output: `Enumerating objects: 5, done.\nCounting objects: 100% (5/5), done.\nTo https://github.com/user/repo.git\n   ${hash()}..${hash()}  ${branch} -> ${branch}`,
+        success: true
+      };
+    }
+
+    case "pull": {
+      if (args.includes("--rebase")) return { output: "Successfully rebased and updated refs/heads/main.", success: true };
+      return {
+        output: `remote: Enumerating objects: 3, done.\nUpdating ${hash()}..${hash()}\nFast-forward\n README.md | 2 ++\n 1 file changed, 2 insertions(+)`,
+        success: true
+      };
+    }
+
+    case "fetch": {
+      return { output: `From https://github.com/user/repo\n * branch            main       -> FETCH_HEAD`, success: true };
+    }
+
+    case "rebase": {
+      if (args.includes("--abort")) return { output: "Rebase aborted.", success: true };
+      if (args.includes("--continue")) return { output: "Successfully rebased and updated refs/heads/feature.", success: true };
+      if (args.includes("-i") || args.includes("--interactive")) return { output: `hint: Waiting for your editor to close the file...\n# Rebase ${hash()}..${hash()} onto ${hash()} (3 commands)\n# pick abc1234 Add feature\n# pick def5678 Fix typo\n# pick ghi9012 Final polish`, success: true };
+      return { output: `Successfully rebased and updated refs/heads/${args.find(a => !a.startsWith("-")) ? "feature/login" : "main"}.`, success: true };
+    }
+
+    case "cherry-pick": {
+      if (args.includes("--abort")) return { output: "Cherry-pick aborted.", success: true };
+      return { output: `[main ${hash()}] Apply cherry-picked commit\n 1 file changed, 3 insertions(+), 1 deletion(-)`, success: true };
+    }
+
+    case "reset": {
+      if (args.includes("--hard")) return { output: "HEAD is now at " + hash() + " Previous commit", success: true };
+      if (args.includes("--soft")) return { output: "", success: true };
+      return { output: `Unstaged changes after reset:\nM\tsrc/app.js`, success: true };
+    }
+
+    case "revert": {
+      return { output: `[main ${hash()}] Revert "Add feature"\n 1 file changed, 0 insertions(+), 1 deletion(-)`, success: true };
+    }
+
+    case "diff": {
+      return {
+        output: `diff --git a/src/app.js b/src/app.js\nindex abc1234..def5678 100644\n--- a/src/app.js\n+++ b/src/app.js\n@@ -10,6 +10,7 @@\n+  const newFeature = true;\n   return app;`,
+        success: true
+      };
+    }
+
+    case "clone": {
+      const url = args[0] || "https://github.com/user/repo.git";
+      const name = url.split("/").pop()?.replace(".git", "") || "repo";
+      return { output: `Cloning into '${name}'...\nremote: Enumerating objects: 42, done.\nremote: Counting objects: 100% (42/42), done.\nReceiving objects: 100% (42/42), done.`, success: true };
+    }
+
+    case "remote": {
+      if (args.includes("add")) return { output: "", success: true };
+      if (args.includes("remove")) return { output: "", success: true };
+      if (args.includes("-v")) return { output: "origin\thttps://github.com/user/repo.git (fetch)\norigin\thttps://github.com/user/repo.git (push)", success: true };
+      return { output: "origin", success: true };
+    }
+
+    case "bisect": {
+      const bSub = args[0];
+      if (bSub === "start") return { output: "", success: true };
+      if (bSub === "bad") return { output: `Bisecting: 10 revisions left to test (roughly 4 steps)\n[${hash()}] Suspected commit`, success: true };
+      if (bSub === "good") return { output: `Bisecting: 5 revisions left to test (roughly 3 steps)\n[${hash()}] Another commit`, success: true };
+      if (bSub === "reset") return { output: "We are back to HEAD now.", success: true };
+      return { output: "", success: false, hint: "git bisect start → git bisect bad → git bisect good <commit>" };
+    }
+
+    case "tag": {
+      if (!args.length) return { output: "v1.0.0\nv1.1.0\nv2.0.0", success: true };
+      return { output: "", success: true };
+    }
+
+    case "show": {
+      return { output: `commit ${hash()}\nAuthor: You <you@example.com>\nDate:   ${new Date().toDateString()}\n\n    Recent commit\n\ndiff --git a/src/app.js b/src/app.js\n+  const feature = true;`, success: true };
+    }
+
+    case "reflog": {
+      return { output: `${hash()} (HEAD -> main) HEAD@{0}: commit: Add login\n${hash()} HEAD@{1}: reset: moving to HEAD~1\n${hash()} HEAD@{2}: commit: Previous feature`, success: true };
+    }
+
+    case "blame": {
+      return { output: `${hash()} (You          2026-03-28 10:00:00 +0000  1) import React from 'react';\n${hash()} (Collaborator 2026-03-27 09:00:00 +0000  2) import { useState } from 'react';`, success: true };
+    }
+
+    case "restore": {
+      return { output: "", success: true };
+    }
+
+    case "config": {
+      if (args.includes("--list")) return { output: "user.name=Git Mastermind User\nuser.email=user@example.com\ncore.editor=code\nmerge.tool=vscode", success: true };
+      return { output: "", success: true };
+    }
+
+    case "help":
+    case "--help":
+    case "--version":
+      return { output: "git version 2.43.0\nusage: git [command] [<args>]\n\nCommon commands:\n  init, add, commit, status, log, branch, switch,\n  merge, push, pull, rebase, stash, cherry-pick, bisect", success: true };
+
+    default:
+      return {
+        output: "",
+        success: false,
+        hint: `'git ${sub}' is not a known command in this simulator.\nTry: git init, git add, git commit, git status, git log, git branch, git merge, git push, git pull`
+      };
+  }
+}
+
 router.post("/ai/validate-command", async (req, res) => {
   try {
     const { command, expectedCommand } = req.body;
-    
     const trimmed = (command || "").trim();
     const trimmedLc = trimmed.toLowerCase();
-    const expected = (expectedCommand || "").trim().toLowerCase();
-    
-    const COMMAND_OUTPUTS: Record<string, string> = {
-      "git init": "Initialized empty Git repository in /home/user/project/.git/",
-      "git add .": "",
-      "git add readme.md": "",
-      "git add -p": "diff --git a/file.txt b/file.txt\n+new line\nStage this hunk [y,n,q,a,d,s,?]?",
-      "git status": "On branch main\nnothing to commit, working tree clean",
-      "git status -s": "M  modified-file.txt\n?? new-untracked.txt",
-      "git log": "commit abc1234def5678 (HEAD -> main)\nAuthor: You <you@example.com>\nDate:   Fri Mar 28 10:00:00 2026\n\n    Initial commit",
-      "git log --oneline": "abc1234 (HEAD -> main) Add user authentication\nbcd2345 Fix navigation bug\ncde3456 Initial commit",
-      "git log --graph --all --decorate": "* abc1234 (HEAD -> main) Merge feature/login\n|\\ \n| * def5678 (feature/login) Add login page\n|/\n* ghi9012 Initial commit",
-      "git branch": "* main\n  feature/login\n  feature/profile",
-      "git branch -a": "* main\n  feature/login\n  remotes/origin/main\n  remotes/origin/feature/login",
-      "git merge feature/login": "Updating abc1234..def5678\nFast-forward\n src/login.js | 45 ++++++++++++\n 1 file changed, 45 insertions(+)",
-      "git merge --no-ff feature/login": "Merge made by the 'ort' strategy.\n src/login.js | 45 ++++++++++++",
-      "git stash": "Saved working directory and index state WIP on main: abc1234 Add navigation",
-      "git stash pop": "On branch main\nChanges not staged for commit:\n  modified: src/app.js\nDropped refs/stash@{0}",
-      "git stash list": "stash@{0}: WIP on main: abc1234 Add navigation\nstash@{1}: WIP on feature: def5678 Partial login",
-      "git push origin main": "Enumerating objects: 5, done.\nCounting objects: 100% (5/5), done.\nTo https://github.com/user/repo.git\n   abc1234..def5678  main -> main",
-      "git pull": "remote: Enumerating objects: 3, done.\nUpdating abc1234..def5678\nFast-forward\n README.md | 2 ++\n 1 file changed, 2 insertions(+)",
-      "git pull --rebase": "Successfully rebased and updated refs/heads/main.",
-      "git rebase main": "Successfully rebased and updated refs/heads/feature/login.",
-      "git bisect start": "",
-      "git bisect bad": "Bisecting: 10 revisions left to test (roughly 4 steps)",
-      "git bisect good": "Bisecting: 5 revisions left to test (roughly 3 steps)",
-      "git cherry-pick abc1234": "[main def5678] Fix critical bug in auth module\n 1 file changed, 3 insertions(+), 1 deletion(-)",
-      "git remote -v": "origin  https://github.com/user/repo.git (fetch)\norigin  https://github.com/user/repo.git (push)",
-      "git remote add origin": "",
-      "git diff": "diff --git a/src/app.js b/src/app.js\n@@ -10,6 +10,7 @@\n+  const newFeature = true;",
-      "git reflog": "abc1234 (HEAD -> main) HEAD@{0}: commit: Add login\nbcd2345 HEAD@{1}: reset: moving to HEAD~1\ncde3456 HEAD@{2}: commit: Previous feature",
-    };
 
-    let isCorrect = false;
-    let feedback = "";
-    let simulatedOutput = "";
-    let hint = "";
-    let confidenceScore = 0.95;
-
-    if (!trimmed) {
-      isCorrect = false;
-      feedback = "Please type a git command to continue.";
-      hint = "All git commands start with 'git'. Try: git status";
-    } else if (!trimmedLc.startsWith("git") && trimmedLc !== "clear" && trimmedLc !== "help") {
-      isCorrect = false;
-      feedback = `"${trimmed}" is not a git command. Git commands must start with 'git'.`;
-      hint = `Did you mean: git ${trimmedLc}?`;
-      confidenceScore = 0.99;
-    } else if (trimmedLc === "clear" || trimmedLc === "help") {
-      isCorrect = true;
-      feedback = trimmedLc === "clear" ? "Terminal cleared." : "Available commands: git init, git add, git commit, git status, git log, git branch, git merge, git push, git pull, git stash, git rebase, git cherry-pick, git bisect";
-      simulatedOutput = feedback;
-    } else if (expected && (trimmedLc === expected || trimmedLc.includes(expected.replace(/^git\s+/, "git ")))) {
-      isCorrect = true;
-      feedback = "✅ Correct! Great job!";
-      simulatedOutput = COMMAND_OUTPUTS[trimmedLc] ?? COMMAND_OUTPUTS[expected] ?? "Command executed successfully.";
-    } else if (expected && trimmedLc !== expected) {
-      isCorrect = false;
-      feedback = `Not quite right. You typed "${trimmed}".`;
-      const expParts = expected.split(" ");
-      hint = `Hint: the command starts with "${expParts.slice(0, 2).join(" ")}"`;
-      confidenceScore = 0.97;
-    } else {
-      // No expected command — validate against known commands
-      const exactOutput = COMMAND_OUTPUTS[trimmedLc];
-      if (exactOutput !== undefined) {
-        isCorrect = true;
-        feedback = `✅ Valid command! Running \`${trimmed}\``;
-        simulatedOutput = exactOutput || "(no output)";
-      } else if (trimmedLc.match(/^git commit -m ['"].+['"]$/)) {
-        const msg = trimmedLc.match(/['"]([^'"]+)['"]/)?.[1] || "update";
-        isCorrect = true;
-        feedback = `✅ Commit created!`;
-        simulatedOutput = `[main ${Math.random().toString(36).substr(2, 7)}] ${msg}\n 1 file changed, 1 insertion(+)`;
-      } else if (trimmedLc.match(/^git switch -c .+/)) {
-        const branch = trimmedLc.split(' ').pop();
-        isCorrect = true;
-        feedback = `✅ Branch created and switched!`;
-        simulatedOutput = `Switched to a new branch '${branch}'`;
-      } else if (trimmedLc.match(/^git branch .+/)) {
-        const branch = trimmedLc.split(' ').pop();
-        isCorrect = true;
-        feedback = `✅ Branch created!`;
-        simulatedOutput = "";
-      } else if (trimmedLc.match(/^git checkout -b .+/)) {
-        const branch = trimmedLc.split(' ').pop();
-        isCorrect = true;
-        feedback = `✅ Branch created and checked out!`;
-        simulatedOutput = `Switched to a new branch '${branch}'`;
-      } else if (trimmedLc.match(/^git remote add .+/)) {
-        isCorrect = true;
-        feedback = "✅ Remote added!";
-        simulatedOutput = "";
-      } else if (trimmedLc.match(/^git push .+/)) {
-        isCorrect = true;
-        feedback = "✅ Pushed to remote!";
-        simulatedOutput = "To https://github.com/user/repo.git\n * [new branch]      feature -> feature";
-      } else if (trimmedLc.startsWith("git ")) {
-        isCorrect = false;
-        feedback = `"${trimmed}" is not a recognized command in this simulator.`;
-        hint = "Try commands like: git init, git add ., git commit -m 'msg', git status, git log, git branch";
-        confidenceScore = 0.80;
-      }
+    // Special terminal commands
+    if (trimmedLc === "clear") {
+      return res.json({ isCorrect: true, feedback: "", simulatedOutput: "__CLEAR__", confidence: "high", confidenceScore: 1.0 });
+    }
+    if (trimmedLc === "help" || trimmedLc === "git help" || trimmedLc === "--help") {
+      return res.json({ isCorrect: true, feedback: "", simulatedOutput: "Git Mastermind Terminal Simulator\nType any git command to practice. Try: git init, git add ., git commit -m 'msg', git status, git log\nAll commands are simulated — no real files are created.", confidence: "high", confidenceScore: 1.0 });
     }
 
-    const gitTreeUpdate = isCorrect ? { action: trimmedLc.split(" ")[1], command: trimmedLc } : null;
+    if (!trimmed) {
+      return res.json({ isCorrect: false, feedback: "Please type a git command.", simulatedOutput: "", confidence: "high", confidenceScore: 0.99 });
+    }
+
+    if (!trimmedLc.startsWith("git")) {
+      return res.json({
+        isCorrect: false,
+        feedback: `'${trimmed}' is not a git command. All git commands start with 'git'.`,
+        simulatedOutput: `bash: ${trimmed}: command not found`,
+        hint: `Did you mean: git ${trimmedLc}?`,
+        confidence: "high",
+        confidenceScore: 0.99
+      });
+    }
+
+    // Check expected command match (for lesson challenges)
+    const expected = (expectedCommand || "").trim().toLowerCase();
+    if (expected && trimmedLc !== expected && !trimmedLc.startsWith(expected.split(" ").slice(0, 2).join(" "))) {
+      const { output, success } = simulateGitCommand(trimmed);
+      return res.json({
+        isCorrect: false,
+        feedback: `Not quite. You typed '${trimmed}'.`,
+        simulatedOutput: output,
+        hint: `Hint: the command starts with '${expected.split(" ").slice(0, 2).join(" ")}'`,
+        confidence: "high",
+        confidenceScore: 0.97
+      });
+    }
+
+    // Simulate the command
+    const { output, success, hint } = simulateGitCommand(trimmed);
 
     res.json({
-      isCorrect,
-      feedback,
-      simulatedOutput,
-      gitTreeUpdate,
-      hint: hint || undefined,
-      confidence: confidenceScore >= 0.9 ? "high" : confidenceScore >= 0.75 ? "medium" : "low",
-      confidenceScore,
+      isCorrect: success,
+      feedback: success ? `` : (hint || `'${trimmed}' is not recognized in this simulator.`),
+      simulatedOutput: output,
+      hint: success ? undefined : hint,
+      gitTreeUpdate: success ? { action: trimmed.split(" ")[1], command: trimmedLc } : null,
+      confidence: success ? "high" : "medium",
+      confidenceScore: success ? 0.97 : 0.80,
     });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to validate command" });
   }
 });
