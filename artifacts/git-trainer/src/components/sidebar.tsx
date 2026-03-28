@@ -9,9 +9,10 @@ interface SidebarProps {
   selectedLessonId: string | null;
   onSelectLesson: (id: string) => void;
   isLoading: boolean;
+  justCompleted?: string[];
 }
 
-export function Sidebar({ lessons, progress, selectedLessonId, onSelectLesson, isLoading }: SidebarProps) {
+export function Sidebar({ lessons, progress, selectedLessonId, onSelectLesson, isLoading, justCompleted = [] }: SidebarProps) {
   const levels = ['beginner', 'intermediate', 'advanced'] as const;
   
   if (isLoading) {
